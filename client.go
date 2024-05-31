@@ -31,12 +31,6 @@ func main() {
 		panic(err)
 	}
 
-	f, err := os.OpenFile("cotacao.txt", os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-
 	_, err = f.WriteString("Dólar: " + string(body) + "\n")
 	if err != nil {
 		return
