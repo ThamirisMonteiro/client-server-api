@@ -11,10 +11,12 @@ import (
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, "GET", "http://localhost:8080/cotacao", nil)
 	if err != nil {
 		panic(err)
 	}
+
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		panic(err)
@@ -26,13 +28,14 @@ func main() {
 		panic(err)
 	}
 
-	f, err := os.Create("cotacao.txt")
+	f, err := os.OpenFile("cotacao.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		panic(err)
 	}
+	defer f.Close()
 
-	_, err = f.WriteString("Dólar: " + string(body) + "\n")
+	_, err = f.WriteString("Dólar: " + string(body))
 	if err != nil {
-		return
+		panic(err)
 	}
 }

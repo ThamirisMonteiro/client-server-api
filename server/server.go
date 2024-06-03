@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
+	_ "modernc.org/sqlite"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -54,7 +56,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 		exchangeRate := exchangeRateResponse.USDBRL
 
-		err = insertIntoDB(exchangeRate)
+		createDBFileIfNotExists()
+
+		db := connectToDB()
+		defer db.Close()
+
+		createTableIfNotExists(db)
+
+		err = insertIntoDB(db, exchangeRate)
 		if err != nil {
 			http.Error(w, "Failed to insert data into database", http.StatusInternalServerError)
 			return
@@ -71,12 +80,58 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func insertIntoDB(r ExchangeRate) error {
-	db, err := sql.Open("mysql", "root:root@tcp(localhost:3306)/clientserverapi")
-	if err != nil {
-		return err
+func createTableIfNotExists(db *sql.DB) {
+	if !tableExists(db, "exchange_rate") {
+		createTableSQL := `
+			CREATE TABLE exchange_rate (
+				id VARCHAR(255),
+				codein VARCHAR(255),
+				name VARCHAR(255),
+				high VARCHAR(255),
+				low VARCHAR(255),
+				var_bid VARCHAR(255),
+				pct_change VARCHAR(255),
+				bid VARCHAR(255),
+				ask VARCHAR(255),
+				timestamp VARCHAR(255),
+				createDate VARCHAR(255)
+			);
+		`
+
+		stmt, err := db.Prepare(createTableSQL)
+		if err != nil {
+			panic(err)
+		}
+		defer stmt.Close()
+
+		_, err = stmt.Exec()
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		println("Table already exists.")
 	}
-	defer db.Close()
+}
+
+func connectToDB() *sql.DB {
+	db, err := sql.Open("sqlite", "client_server_api.db")
+	if err != nil {
+		panic(err)
+	}
+	return db
+}
+
+func createDBFileIfNotExists() {
+	if _, err := os.Stat("client_server_api.db"); os.IsNotExist(err) {
+		file, err := os.Create("client_server_api.db")
+		if err != nil {
+			panic(err)
+		}
+		file.Close()
+	}
+}
+
+func insertIntoDB(db *sql.DB, r ExchangeRate) error {
 	stmt, err := db.Prepare("INSERT INTO exchange_rate (id, codein, name, high, low, var_bid, pct_change, bid, ask, timestamp, createDate) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
 	if err != nil {
 		return err
@@ -87,4 +142,15 @@ func insertIntoDB(r ExchangeRate) error {
 		return err
 	}
 	return nil
+}
+
+func tableExists(db *sql.DB, tableName string) bool {
+	var tableExists bool
+	query := "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+	err := db.QueryRow(query, tableName).Scan(&tableName)
+	if err != nil && err != sql.ErrNoRows {
+		panic(err)
+	}
+	tableExists = err != sql.ErrNoRows
+	return tableExists
 }
