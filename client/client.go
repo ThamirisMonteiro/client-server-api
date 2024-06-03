@@ -26,7 +26,7 @@ func main() {
 		panic(err)
 	}
 
-	f, err = os.Create("cotacao.txt")
+	f, err := os.Create("cotacao.txt")
 	if err != nil {
 		panic(err)
 	}
