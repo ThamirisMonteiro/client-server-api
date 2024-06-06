@@ -1,14 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/google/uuid"
-	_ "modernc.org/sqlite"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/google/uuid"
+	_ "github.com/go-sql-driver/mysql"
+	_ "modernc.org/sqlite"
 )
 
 type ExchangeRateResponse struct {
@@ -38,46 +40,54 @@ func main() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	select {
-	case <-time.After(time.Millisecond * 200):
-		req, err := http.Get("https://economia.awesomeapi.com.br/json/last/USD-BRL")
-		if err != nil {
-			http.Error(w, "Failed to fetch data from API", http.StatusInternalServerError)
-			return
-		}
-		defer req.Body.Close()
+	// Definindo o timeout do contexto do handler
+	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Nanosecond)
+	defer cancel()
 
-		var exchangeRateResponse ExchangeRateResponse
-		if err := json.NewDecoder(req.Body).Decode(&exchangeRateResponse); err != nil {
-			http.Error(w, "Failed to parse JSON response: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		exchangeRate := exchangeRateResponse.USDBRL
-
-		createDBFileIfNotExists()
-
-		db := connectToDB()
-		defer db.Close()
-
-		createTableIfNotExists(db)
-
-		err = insertIntoDB(db, exchangeRate)
-		if err != nil {
-			http.Error(w, "Failed to insert data into database", http.StatusInternalServerError)
-			return
-		}
-
-		_, err = w.Write([]byte(exchangeRate.Bid + "\n"))
-		if err != nil {
-			http.Error(w, "Failed to write response", http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	case <-ctx.Done():
-		http.Error(w, "Request canceled or timed out", http.StatusRequestTimeout)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://economia.awesomeapi.com.br/json/last/USD-BRL", nil)
+	if err != nil {
+		http.Error(w, "Failed to create request: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to fetch data from API: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	var exchangeRateResponse ExchangeRateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&exchangeRateResponse); err != nil {
+		http.Error(w, "Failed to parse JSON response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	exchangeRate := exchangeRateResponse.USDBRL
+
+	createDBFileIfNotExists()
+
+	// Definindo o timeout do contexto do banco de dados
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer dbCancel()
+
+	db := connectToDB()
+	defer db.Close()
+
+	createTableIfNotExists(db)
+
+	err = insertIntoDB(dbCtx, db, exchangeRate)
+	if err != nil {
+		http.Error(w, "Failed to insert data into database: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_, err = w.Write([]byte(exchangeRate.Bid + "\n"))
+	if err != nil {
+		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func createTableIfNotExists(db *sql.DB) {
@@ -131,13 +141,14 @@ func createDBFileIfNotExists() {
 	}
 }
 
-func insertIntoDB(db *sql.DB, r ExchangeRate) error {
-	stmt, err := db.Prepare("INSERT INTO exchange_rate (id, codein, name, high, low, var_bid, pct_change, bid, ask, timestamp, createDate) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+func insertIntoDB(ctx context.Context, db *sql.DB, r ExchangeRate) error {
+	stmt, err := db.PrepareContext(ctx, "INSERT INTO exchange_rate (id, codein, name, high, low, var_bid, pct_change, bid, ask, timestamp, createDate) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	_, err = stmt.Exec(uuid.New().String(), r.Codein, r.Name, r.High, r.Low, r.VarBid, r.PctChange, r.Bid, r.Ask, r.Timestamp, r.CreateDate)
+
+	_, err = stmt.ExecContext(ctx, uuid.New().String(), r.Codein, r.Name, r.High, r.Low, r.VarBid, r.PctChange, r.Bid, r.Ask, r.Timestamp, r.CreateDate)
 	if err != nil {
 		return err
 	}
