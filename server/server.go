@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 )
 
@@ -40,35 +40,33 @@ func main() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	// Definindo o timeout do contexto do handler
-	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Nanosecond)
+	ctx, cancel := context.WithTimeout(r.Context(), 200*time.Millisecond)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://economia.awesomeapi.com.br/json/last/USD-BRL", nil)
 	if err != nil {
 		http.Error(w, "Failed to create request: "+err.Error(), http.StatusInternalServerError)
-		return
+		panic(err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		http.Error(w, "Failed to fetch data from API: "+err.Error(), http.StatusInternalServerError)
-		return
+		panic(err)
 	}
 	defer resp.Body.Close()
 
 	var exchangeRateResponse ExchangeRateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&exchangeRateResponse); err != nil {
 		http.Error(w, "Failed to parse JSON response: "+err.Error(), http.StatusInternalServerError)
-		return
+		panic(err)
 	}
 
 	exchangeRate := exchangeRateResponse.USDBRL
 
 	createDBFileIfNotExists()
 
-	// Definindo o timeout do contexto do banco de dados
-	dbCtx, dbCancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer dbCancel()
 
 	db := connectToDB()
@@ -79,13 +77,13 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	err = insertIntoDB(dbCtx, db, exchangeRate)
 	if err != nil {
 		http.Error(w, "Failed to insert data into database: "+err.Error(), http.StatusInternalServerError)
-		return
+		panic(err)
 	}
 
 	_, err = w.Write([]byte(exchangeRate.Bid + "\n"))
 	if err != nil {
 		http.Error(w, "Failed to write response", http.StatusInternalServerError)
-		return
+		panic(err)
 	}
 	w.WriteHeader(http.StatusOK)
 }
